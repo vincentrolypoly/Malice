@@ -1,0 +1,40 @@
+-------Operators--------------------------
+Exp ::= Exp '|' XORS |  XORS
+XORS    ::= XORS '^' ANDS | ANDS
+ANDS    ::= ANDS '&' SUMS | SUMS
+SUMS    ::= SUMS '+' Multi | SUMS '-' Multi | Multi
+Multi   ::= Multi '*' Factor | Multi '/' Factor | Multi '%' Factor | Factor
+Factor  ::= Number | Ident | '~' Factor
+
+--------Stepping--------------------------
+Step ::= Ident StepChoice
+StepChoice ::= 'drank' | 'ate'
+--------Seperator Terms-------------------
+ConnTerms ::= 'and' | 'but' | 'then' | ','
+EndTerm   ::= '.'
+FirstSeperator ::= EndTerm | ConnTerms
+FollowSeperator ::= FirstSeperator | 'too' EndTerm
+
+--------Types---------------------------
+Type ::= 'number' | 'letter'
+
+--------Statements---------------------
+DeclareAssignStatement ::= Ident DeclareAssign
+DeclareAssign          ::= 'was a' Type | 'became' Val
+ 
+Val       ::= Exp | Char
+Print     ::= Val 'said Alice' EndTerm
+FirstStatement ::= DeclareAssignStatement FirstSeperator | Step FirstSeperator 
+FollowStatement ::= DeclareAssignStatement FollowSeperator | Step FollowSeperator | ''
+FollowStatements ::= FollowStatement FollowStatements | FollowStatement
+---------Lists of statements------------
+Statement_List ::= FirstStatement FollowStatements| Print 
+
+-------Main Method-----------------------------
+Main::= 'The looking-glass hatta' '(' ')' 'opened' Statement_List 'closed'
+
+
+-------Notes------------------------------
+
+  ---  denotes a non-terminal {ie, Statement Statement_List Type -> these pull the AST down a level}
+ '---' denotes a terminal     {ie, 'and' '.' 'number' 'letter'   -> these are the leaves of the AST}

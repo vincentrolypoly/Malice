@@ -1,0 +1,19 @@
+functions can be blank or have a full stop in them
+if statements cannot be blank but can have full stops
+opened and closed act like curly brackets, can be put inside if statement
+if statements cannot contain functions or procedures
+need to do "eventually", arrays(access and declaration), passing by reference? ("spider") could be a pointer?, strings, global declarations
+no True or False 
+have to have at least a dot inside while loops
+dot can be inside opened and closed
+end of loop doesnt have to have dot at end
+end of perhaps can have dot at end
+what was HFSUHF? can have full stop at end
+Cannot declare the same variable inside the body of a function and inside the argument declaration
+Enclosing it with opened and closed is allowed because it creates a new scope
+^^^^^^^^^consider adding scopeID?
+Reference compiler does not keep track of if a variable has been initialised or not
+cannot print arrays
+add in functionality to compile multiple files
+functions and variables with the same name cannot be declared in the same scope
+

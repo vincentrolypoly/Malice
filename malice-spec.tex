@@ -1,0 +1,168 @@
+\documentclass[10pt]{article}
+\usepackage[utf8x]{inputenc}
+\usepackage{amsmath}
+\usepackage{sectsty}
+\title{Malice Specification}
+\author{Martin Donlin, Le Thanh Hoang, Eleanor Vincent}
+\begin{document}
+  \maketitle 
+  \subsectionfont{\normalsize}
+  \sectionfont{\large}
+  \subsubsectionfont{\small}
+  \section{Grammars}
+  \subsection{Context-Free Grammar and Notation}
+  \footnotesize In this specification we will describe Malice's syntax by using the Context-Free Grammar notation, Backus-Naur Form. We will be detailing the Syntactic Grammar(Ch 2) and Lexical Structure(Ch 3). 
+\subsubsection{Notation}
+Each instruction consists of a left Terminal Node (representated by \emph{italic}) followed by "::=" and a combination of one or more Non-terminal Nodes (representated by straight text and surround by '' if the node is a literal string) or Terminal Nodes. We will be using '\textbar' to represent a choice between instructions and '..' to represent the choice range. e.g "A..C" means A \textbar \space B \textbar \space C. 
+  \section{Syntactic Grammar}
+  \subsection{Main Function}
+  The main function in Malice comprises of the key phrase "The looking-glass hatta' followed by any number of arguments enclosed in an open and close parenthesis. To start typing code into the main function, an 'opened' keyword must be used and a 'closed' keyword must be used to finish the main function.
+  \\{\bf BNF representation: Ch 6.0.2}
+  \subsection{Programs And Statements}
+  Programs consist of any number of Statements including none at all. The first statement in a program (if any) must not have the 'too.' seperator at the end. Any statements following the first statement can have any seperator. Statements consist of a Declaration(Ch 4.1), an Assignment(Ch 4.2), or a stepping instruction(Ch 3.5) followed by a Seperator(Ch 3.6).
+  \\{\bf BNF representation: Ch 6.0.3 \& 6.0.4}
+  \section{Lexical Structure}
+  \subsection{Keywords/Keyphrases}
+  Malice has a number of reserved keywords/keyphrases. These keywords cannot be used for naming Identifiers(Ch 3.3). The keywords are as follows (seperated by '\textbar'):
+  \\ 
+  \\
+  ate \textbar \space 
+  drank \textbar \space  
+  and \textbar \space 
+  but \textbar \space 
+  then \textbar \space 
+  too \textbar \space 
+  number \textbar \space 
+  letter \textbar \space 
+  was a \textbar \space 
+  became  \textbar \space 
+  said Alice \textbar \space 
+  the looking glass hatta \textbar \space 
+  opened \textbar \space 
+  closed
+  \subsection{Literals}
+  \subsubsection{Numbers}
+  In Malice there is a type 'number' which is defined as a 4 byte, base 10, integer. Where byte is defined as the size of a char in the architecture. The internal representation of a number uses 2's Complement. A number can consist of any number of digits so long as it doesn't start with a 0. 
+  \\
+  \\
+  Number := Non-Zero-Digit Digits \textbar \space Digit  
+  \\
+  Digits:= Digit \textbar \space Digit Digits
+  \\
+  Digit := 0 \textbar \space Non-zero-Digit
+  \\
+  Non-Zero-Digit := 1..9
+  \subsubsection{Letters}
+  In Malice there is a type 'letter' which is defined as a byte. Where byte us defined as the size of a char in the architecture. A letter can consist of any letter from A to Z or a to z.
+ \\
+ \\
+ Letter ::= A..Z \textbar \space a..z (see notation)
+  \subsection{Identifiers}
+  An identifier name can be made up of any number of Malice letters and any number of Malice digits so long as the identifier name does not start with a number. An identifier name can be defined as follows:
+  \\
+  IdentName ::= letter letterOrNum
+  \\
+  letterOrNum ::= letter letterOrNum \textbar \space number letterOrNum \textbar \space ''
+  \subsection{Operators}
+  Malice has a number of binary and unary operators that only work on numbers. The precedence of operators are defined as follows:
+  \begin{table}[h]
+  \centering
+  \begin{tabular}{| c | c |  c|}
+  
+  \hline
+  Operation & Symbol & Level Of Precedence\\ \hline
+  Bitwise Not & \textasciitilde & 0 \\ \hline
+  Multiply & * & 1 \\ \hline
+  Divide & / & 1 \\ \hline
+  Mod & \% & 1 \\ \hline
+  Add & + & 2 \\ \hline
+  Subtract & - & 2 \\ \hline
+  Bitwise And & \& & 3 \\ \hline
+  Bitwise Xor & \verb|^| & 4 \\ \hline
+  Bitwise Or &  \textbar & 5\\ \hline
+  \end{tabular}
+  \end{table}
+  \subsection{Stepping}
+  Malice has two stepping functions. The keyword 'drank' decrements a variable and the keyword 'ate' increments a variable. Both functions store the stepped value back into the variable.
+  \\{\bf BNF representation: Ch 6.0.7}
+  \subsection{Seperators}
+  Malice has a number of seperators that can be used to  seperate statements(Ch 2.2). A statement can be finished by any seperator so long as the statement is not the first statement nor the last. There are pre-defined rules for the first and last statement such that the first statement cannot finish with the 'too.' seperator and the last statement must finish with a full stop.
+  \\{\bf BNF representation: Ch 6.0.8}
+  \subsection{Printing}
+  To print values to the console, Malice uses the keyphrase 'said Alice' which must be preceeded by an expression of terms, an identifier or a combination of both.
+  \\{\bf BNF representation: Ch 6.0.9}
+  \section{Variables}
+  \subsection{Declaration}
+  Variables are declared in Malice using the keyphrase 'was a' which must be preceeded by a new identifier name and followed by either the keyword 'number' or 'letter'
+  \\{\bf BNF representation: Ch 6.0.5}
+  \subsection{Assignment}
+  Variables are assigned values in Malice by using the keyword 'became' preceeded by an existing identifier and followed by a expression of the same type.
+  \\{\bf BNF representation: Ch 6.0.5}
+  \section{Error Messages}
+  \subsection{Semantic Rules}
+  \begin{enumerate}
+  \item Assignments of values into variables must have the same type 
+  \item Assignments can only be done to existing variables
+  \item Casting from a letter to a number is not allowed
+  \item Stepping instructions can only be applied to existing variables, that has already been assigned a value and is of type number.
+  \item The same variable name cannot be declared twice
+  \item Variables but not have the same name as any of the keywords
+  \item All variable names must start with a letter followed by any number of digits or letters
+  \item Operators only work on variables of type number or literals of type number
+  \end{enumerate}
+  \subsubsection{Semantic error messages}
+  
+  Type Clash in assignment on line \#. One type is -type1- and the other is -type2-.
+  \\
+  This error message indicates the user has tried to assign a value into a variable that is of different type. i.e type1 and type2 are different.
+  \newpage
+  \section{BNF Representation}
+  \subsubsection{Main Function}
+  \emph{Main} ::= 'The looking-glass hatta' '(' ')' 'opened' \emph{StatementList} 'closed'
+  \subsubsection{Programs}
+  \emph{StatementList} ::= \emph{FirstStatement} \emph{FollowStatements} \textbar \space \emph{Print} 
+  \subsubsection{Statements}
+  \emph{FirstStatement} ::= \emph{DeclareAssignStatement} \emph{FirstSeperator} \textbar \space \emph{Step} \emph{FirstSeperator}
+  \\
+  \emph{FollowStatement} ::= \emph{DeclareAssignStatement} \emph{FollowSeperator} \textbar \space \emph{Step} \emph{FollowSeperator} \textbar \space '' 
+  \\
+  \emph{FollowStatements} ::= \emph{FollowStatement} \emph{FollowStatements} \textbar \space \emph{FollowStatement}
+  \subsubsection{Declaration and Assignment}
+  \emph{DeclareAssignStatement} ::= Ident \emph{DeclareAssign}
+  \\
+  \emph{DeclareAssign} ::= 'was a' \emph{Type} \textbar \space 'became' \emph{Var} 
+  \subsubsection{Type}
+  \emph{Type} ::= 'number' \textbar \space 'letter'
+  \subsubsection{Stepping}
+  \emph{Step} ::= Ident \emph{StepChoice}
+  \\
+  \emph{StepChoice} ::= 'drank' \textbar \space 'ate'
+  \subsubsection{Seperators}
+  \emph{ConnTerms} ::= 'and' \textbar \space 'but' \textbar \space 'then' \textbar \space ','
+  \\  
+  \emph{EndTerm} ::= '.'
+  \\
+  \emph{FirstSeperator} ::= \emph{EndTerm} \textbar \space \emph{ConnTerms}
+  \\
+  \emph{FollowSeperator} ::= \emph{FirstSeperator} \textbar \space 'too' \emph{EndTerm}
+  \subsubsection{Printing}
+  \emph{Print} ::= \emph{Val} 'said Alice' \emph{EndTerm}
+  \subsubsection{Values}
+  \emph{Val} ::= \emph{Exp} \textbar \space \emph{Char}
+  \subsubsection{Operators}
+  \emph{Exp} ::= \emph{Exp} '\textbar' \emph{Xors} \textbar \space \emph{Xors} 
+  \\
+  \emph{Xors} ::= \emph{Xors} '\verb|^|' \emph{Ands} \textbar \space \emph{Ands}
+  \\
+  \emph{Ands} ::= \emph{Ands} '\&' \emph{Sums} \textbar \space \emph{Sums}
+  \\
+  \emph{Sums} ::= \emph{Sums} '+' \emph{Multi} \textbar \space \emph{Sums} '-' \emph{Multi} \textbar \space \emph{Multi}
+  \\
+  \emph{Multi} ::= \emph{Multi} '*' \emph{Factor} \textbar \space \emph{Multi} '/' \emph{Factor} \textbar \space \emph{Multi} '\%' \emph{Factor} \textbar \space \emph{Factor}
+  \\
+  \emph{Factor} ::= Number  \textbar \space Ident  \textbar \space '\textasciitilde' \emph{Factor}
+
+  
+
+
+\end{document}

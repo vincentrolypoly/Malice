@@ -1,0 +1,956 @@
+	
+
+#include "codeGenerator.hpp"
+#include "ASTAll.hpp"
+#include "symbolTable.hpp"
+#include <deque>
+#include "auxillaryMethods.hpp"
+#include "AllCodeGenNodes.hpp"
+#include <sstream>
+/*NOTES
+* Need to implement register management
+* Passing by reference
+* CALL -- done but does not account for passing  by reference yet //untested
+* SCOPING!!!! -- scoping works, requires a bit more testing
+* returning values from functions 
+*/
+codeGenerator::codeGenerator(char* f){
+	fileName = f;
+	regAvail = new deque<string>();
+	instr = new deque<IA32Nodes*>();
+	global = new deque<IA32Nodes*>();
+	addRegs();
+	wordSize = 8;
+	currentScope = new codeGenEnv(NULL); //Used to store variable names to addresses
+	loopCounter = 0;
+	stringCounter = 0;
+	ifCounter = 0;
+	elseCounter = 0;
+	boolCounter = 0;
+	currentScope->add("string", "string",0);
+	currentScope->add("integer", "integer",0);
+	currentScope->add("char", "char",0);
+	decls = new deque<IA32Nodes*>();
+	decls->push_front(new segmentNode("bss"));
+	funcStack = new deque<deque<IA32Nodes*>*>();
+	scopeCounter = 0;
+}
+//USE THIS TO ADD INSTRUCTION NODES ONTO THE DEQUE FOR PRINTING TO FILE
+void codeGenerator::add(IA32Nodes* n){
+	instr->push_back(n);
+}
+int codeGenerator::nextLoopCount(){
+	int temp = loopCounter;
+	loopCounter++;
+	return temp;
+}
+int codeGenerator::nextElseCount(){
+	int temp = elseCounter;
+	elseCounter++;
+	return temp;
+}
+int codeGenerator::nextStringCount(){
+	int temp = stringCounter;
+	stringCounter++;
+	return temp;
+}
+int codeGenerator::nextIfCount(){
+	int temp = ifCounter;
+	ifCounter++;
+	return temp;
+}
+int codeGenerator::nextBoolCounter(){
+	int temp = boolCounter;
+	boolCounter++;
+	return temp;
+}
+//SET UP THE BEGINNING OF THE FILE
+void codeGenerator::setUp(){
+	file.open(fileName, fstream::app);
+	file << "segment .text" << endl;
+	file << "global main" << endl;
+	file << "extern printf" << endl;
+	file << "extern scanf" << endl;
+	file << "extern malloc" << endl;
+	file << "segment .data." << endl;
+	file << "integer:" << endl;
+	file << "	db " << "\"" << "%i" << "\"" << "," << "0 "<< endl;
+	file << "string:" << endl;
+	file << "	db " << "`%s`" << "," << "0 "<< endl;
+    file << "char: " << endl;
+    file << "   db " << "\"" << "%c" << "\"" << "," << "0 "<< endl;
+	file << "scaninteger:" << endl;
+	file << "	db " << "\"" << "%d" << "\"" << ", 0" <<  endl;
+	file << "scanstring:" << endl;
+	file << "	db " << "`" << "%[^\\n]%*c" << "` , 0" <<  endl;
+    file << "scanchar: " << endl;
+    file << "   db " << "\"" << "%c" << "\"" << endl;
+	file.close();
+}
+
+//Prints list of Nodes into a file
+void codeGenerator::printFile(){
+	deque<IA32Nodes*>::iterator it;
+	file.open(fileName, fstream::trunc);
+	for(it=decls->begin(); it<decls->end(); it++){
+		file << (*it)->printSelf() << endl;
+	} 
+	file.close();
+	setUp();
+	file.open(fileName, fstream::app);
+	for(it=global->begin(); it<global->end(); it++){
+		file << (*it)->printSelf() << endl;
+	}
+	for(it=instr->begin(); it<instr->end(); it++){
+		file << (*it)->printSelf() << endl;
+	} 
+	file.close();
+}
+
+
+void codeGenerator::returnToSystem(){
+	file.open(fileName, fstream::app);
+	file <<	"	mov  rax, 1	; Linux system call 1 : exit ()" << endl;
+	file <<	"	mov  rbx, 0 ; Error code 0: no errors" << endl;		
+	file <<	"	int  80H    ; Interrupt Linux Kernel"    << endl;	
+	file.close();	
+}
+
+//Adds the list of registers we have to start with into the deque of available registers
+void codeGenerator::addRegs(){
+	//rax reserved
+	regAvail->push_back("rbx");
+	regAvail->push_back("rcx");
+	//rdx reserved
+	//rdi reserved
+	//rsi reserved
+	for(int i = 8 ; i < 17; i++){
+		stringstream ss;
+		ss << i;
+		string reg = "R" + ss.str();
+		regAvail->push_back(reg);
+	}
+}
+void saveRegs(){
+}
+void restoreRegs(){
+}
+void codeGenerator::check(assignNode *n, SymbolTable *currentST){
+	variableASTNode* var = n->getLHS();
+	ExpressionASTNode* b = n->getRHS();
+	string varBase = currentScope->searchEnclosingForBase(var->getName());
+	int offset = currentScope->searchEnclosingForOffset(var->getName());
+
+		
+	
+	stringstream ss;
+	ss << offset;
+	
+
+	string regExpr = regAvail->front();
+	b->accept(this, currentST); //RHS stores its answer in regBase
+	regAvail->pop_front();
+	
+	string regVar = regAvail->front();
+	var->accept(this, currentST); //LHS stores its answer in regVar
+
+	variableASTNode* RHS = dynamic_cast<variableASTNode*>(b);
+	if(RHS != NULL){
+		add(new moveNode(regExpr, "[" + regExpr +"]"));
+	}
+	add(new moveNode("[" + regVar + "]", regExpr));
+	regAvail->push_front(regExpr);
+	
+}
+void codeGenerator::check(returnNode *n, SymbolTable *currentST){//UNTESTED
+	string regVal = regAvail->front();
+	ExpressionASTNode* expr = n->getvalue();
+	expr->accept(this, currentST);
+	variableASTNode* var = dynamic_cast<variableASTNode*>(expr);
+	if(var){
+		add(new moveNode(regVal, "[" + regVal + "]"));
+	}
+	add(new moveNode("rax", regVal));
+	add(new moveNode("rsp","rbp"));
+	add(new popNode("rbp"));// restore stack pointers
+	add(new retNode());
+}
+void codeGenerator::check(identifierASTNode *n, SymbolTable *currentST){//kind of tested
+	string baseAddress = currentScope->searchEnclosingForBase(n->getName()); //Look for address of where identifier is stored
+	int offset = currentScope->searchEnclosingForOffset(n->getName());
+	stringstream ss;
+	ss << offset;
+	int scopeLevel = currentScope->getEnclosingScopeLevel(n->getName());
+
+	string regVal = regAvail->front();
+	add(new moveNode(regVal, baseAddress));
+	add(new leaNode(regVal, "[" + regVal + "+" + ss.str()+ "]"));
+}	
+
+void codeGenerator::check(incrementNode *n, SymbolTable *currentST){
+	variableASTNode* var = n->getVar();
+	string base = currentScope->searchEnclosingForBase(var->getName());
+	int offset = currentScope->searchEnclosingForOffset(var->getName());
+	string reg = regAvail->front();
+	regAvail->pop_front();
+	string incReg = regAvail->front();
+	stringstream ss;
+	ss<< offset;
+	var->accept(this, currentST);
+	add(new moveNode(reg, "[" + incReg + "]"));
+	add(new incNode(reg));
+	add(new moveNode("[" + incReg + "]",reg));
+	regAvail->push_front(reg);
+	
+}
+
+void codeGenerator::check(arrayAccessIdentifier *n, SymbolTable *currentST){
+	string baseAddress = currentScope->searchEnclosingForBase(n->getName());
+	int offset = currentScope->searchEnclosingForOffset(n->getName());
+	stringstream ss;
+	ss << offset;
+	string regVal = regAvail->front();
+	regAvail->pop_front();
+	string regExpr = regAvail->front();
+	add(new moveNode(regVal, baseAddress));
+	add(new moveNode(regVal, "[" + regVal + "+" + ss.str()+ "]")); //reg val has address to the address of top of array
+	n->getExpr()->accept(this, currentST); //generate code for expression to access and store in regExpr
+	variableASTNode* var = dynamic_cast<variableASTNode*>(n->getExpr());
+	if(var){
+		add(new moveNode(regExpr, "[" + regExpr + "]"));
+	}
+	add(new imulNode(regExpr, "8"));
+	add(new addNode(regVal, regExpr));
+	regAvail->push_front(regVal);
+}
+
+void codeGenerator::check(decrementNode *n, SymbolTable *currentST){
+	variableASTNode* var = n->getVar();
+	string base = currentScope->searchEnclosingForBase(var->getName());
+	int offset = currentScope->searchEnclosingForOffset(var->getName());
+	string reg = regAvail->front();
+	regAvail->pop_front();
+	string decReg = regAvail->front();
+	stringstream ss;
+	ss<< offset;
+	var->accept(this, currentST);
+	add(new moveNode(reg, "[" + decReg + "]"));
+	add(new decNode(reg));
+	//add(new moveNode(reg,base));
+	add(new moveNode("[" + decReg + "]",reg));
+	regAvail->push_front(reg);
+}
+void codeGenerator::check(bodyNode *n, SymbolTable *currentST){
+	codeGenEnv* prevScope = currentScope;
+	currentScope = new codeGenEnv(currentScope); //create a new scope for variable environment	
+	declListNode* decl = n->getDecls();
+	compoundStatement* body = n->getBody();
+	//Add arguments to scope
+	deque<varDeclNode*>* args = argBuffer->getActualArgs();
+	deque<varDeclNode*>::iterator it;
+	int argCounter = wordSize*2;
+	stringstream ss;
+	ss << scopeCounter;
+	currentScope->setScopeLabel("LC" + ss.str());
+	add(new moveNode("[" + currentScope->getScopeLabel() + "]", "rbp"));
+	decls->push_back(new resbNode(currentScope->getScopeLabel(),wordSize));
+	scopeCounter++;
+	for(it=args->begin(); it != args->end(); it++){
+		currentScope->add((*it)->getName(), "[" + currentScope->getPrevScopeLabel()+"]", (argCounter));
+		argCounter+=wordSize;
+	}
+	if(decl)
+		decl->accept(this,currentST);	
+	if(body)
+		body->accept(this, currentST);
+	currentScope = prevScope;
+	
+}
+void codeGenerator::check(callNode *n, SymbolTable *currentST){
+	add(new pushNode("rax"));
+	string regVal = regAvail->front();
+	actualParamsNode* params = n->getParams();
+	deque<ExpressionASTNode*>* givenParams = params->getGivenParams();
+	deque<ExpressionASTNode*>::reverse_iterator rit;
+	variableASTNode* var;
+	for(rit=givenParams->rbegin();rit < givenParams->rend(); rit++) {
+		(*rit)->accept(this,currentST);
+		var = dynamic_cast<variableASTNode*>(*rit);
+		if(var){
+			add(new moveNode(regVal, "[" + regVal + "]"));
+		}
+		add(new pushNode(regVal));
+	} 
+	add(new callerNode(	currentScope->searchEnclosingForBase(n->getName())));
+	int usedStackSize = givenParams->size() * wordSize;
+	stringstream ss;
+	ss << usedStackSize;
+	add(new addNode("rsp", ss.str()));
+	add(new moveNode(regVal , "rax")); //move answer into first register
+	add(new popNode("rax"));
+	//restore stack pointer here
+}
+void codeGenerator::check(callNodeStatement *n, SymbolTable *currentST){
+	string regVal = regAvail->front();
+	actualParamsNode* params = n->getParams();
+	deque<ExpressionASTNode*>* givenParams = params->getGivenParams();
+	deque<ExpressionASTNode*>::reverse_iterator rit;
+	variableASTNode* var;
+	for(rit=givenParams->rbegin();rit < givenParams->rend(); rit++) {
+		(*rit)->accept(this,currentST);
+		var = dynamic_cast<variableASTNode*>(*rit);
+		if(var){
+			add(new moveNode(regVal, "[" + regVal + "]"));
+		}
+		add(new pushNode(regVal));
+	} 
+	add(new callerNode(	currentScope->searchEnclosingForBase(n->getName())));
+	int usedStackSize = givenParams->size() * wordSize;
+	stringstream ss;
+	ss << usedStackSize;
+	add(new addNode("rsp", ss.str()));
+}
+void codeGenerator::check(varDeclNode *n, SymbolTable *currentST){
+	//look for n being declared already in enclosing scopes
+	//if not declared in enclosing scopes, define global variable and add to env
+	//else push current value of variable onto stack and change global variable to updated variable
+	//if spider 
+	ExpressionASTNode* val = n->getValue();
+	stringstream ss;
+	ss << wordSize;
+	if(currentScope->getScopeLevel() == 0){
+
+		currentScope->incVarCount();
+		string baseLabel = currentScope->getPrevScopeLabel();
+		int relativeBase = currentScope->getVarCount() * wordSize * -1;	
+		currentScope->add(n->getName(), "[" + baseLabel + "]", relativeBase); //work out relative address and add to env 
+		funcStack->push_front(instr);
+		instr = global;
+		if(val){
+				string regVal = regAvail->front();
+				val->accept(this,currentST);//generate code for value
+				stringstream sss;
+				sss << relativeBase;
+				add(new pushNode(regVal));				
+		}else{
+				add(new subNode("rsp" , ss.str())); //reserve space on stack for variable
+		}
+		deque<IA32Nodes*>* front = funcStack->front(); //front is all the code generated previously
+		funcStack->pop_front();
+		instr = front;
+
+	}else{
+		//local
+		currentScope->incVarCount();
+		string baseLabel = currentScope->getPrevScopeLabel();
+		int relativeBase = currentScope->getVarCount() * wordSize * -1;	
+		currentScope->add(n->getName(), "[" + baseLabel + "]", relativeBase); //work out relative address and add to env 
+		if(val){
+				string regVal = regAvail->front();
+				val->accept(this,currentST);//generate code for value
+				stringstream sss;
+				sss << relativeBase;
+				add(new pushNode(regVal));				
+		}else{
+				add(new subNode("rsp" , ss.str())); //reserve space on stack for variable
+		}
+		//add(new pushNode(address));
+	}	
+}
+void codeGenerator::check(arrDeclNode *n, SymbolTable *currentST){
+	ExpressionASTNode* val = n->getSize();
+	string regVal = regAvail->front();
+	val->accept(this,currentST);
+	stringstream ss;
+	ss << wordSize;
+	add(new moveNode("rdi", regVal));	
+	add(new imulNode("rdi", ss.str()));
+	add(new pushNode("rax"));
+	add(new xorNode("rax", "rax"));
+	add(new callerNode("malloc"));
+	//do rax test here
+	add(new moveNode(regVal, "rax"));
+	add(new popNode("rax"));
+
+	 //adding pointer to array onto stack
+	currentScope->incVarCount();
+
+	//adding it to current environment
+	string baseLabel = currentScope->getPrevScopeLabel();
+	int relativeBase = currentScope->getVarCount()*-(wordSize);
+	currentScope->add(n->getName(), "[" + baseLabel + "]", relativeBase);
+	add(new pushNode(regVal )); 
+}
+
+void codeGenerator::check(binaryExpressionASTNode *n, SymbolTable *currentST){
+	ExpressionASTNode* left = n->getLeft(); 
+	ExpressionASTNode* right = n->getRight(); 
+	binaryOp op = n->getOp(); 
+	variableASTNode* var;
+	string leftReg = regAvail->front();
+	left->accept(this, currentST);
+	regAvail->pop_front();
+	var = dynamic_cast<variableASTNode*>(left);
+	if(var){	
+		add(new moveNode(leftReg, "[" + leftReg + "]"));
+	}
+	string rightReg = regAvail->front();
+	right->accept(this, currentST);
+	regAvail->pop_front();
+
+	var = dynamic_cast<variableASTNode*>(right);
+	if(var){	
+		add(new moveNode(rightReg, "[" + rightReg + "]"));
+	}
+	//CHECK IF ITS A VARIABLE
+	//MIGHT NEED TO ADD FUNCTIONALITY FOR ADDING CHARS IN HERE
+
+	int thisBool = nextBoolCounter();
+	stringstream ss;
+	ss << thisBool;
+	string boolLabel = "bool_" + ss.str();
+
+
+	if (op == iplus){
+		add(new addNode(leftReg,rightReg));
+	}else
+	if (op == subtract){
+		add(new subNode(leftReg,rightReg));
+	}else
+	if (op == idiv){
+		add(new pushNode("rax"));
+		add(new pushNode("rdx"));
+		add(new xorNode("rdx", "rdx"));
+		add(new moveNode("rax", leftReg));
+		add(new idivNode(rightReg));
+		add(new moveNode(leftReg, "rax"));
+		add(new popNode("rdx"));
+		add(new popNode("rax"));
+	}else
+	if (op == mul){
+		add(new pushNode("rax"));
+		add(new moveNode("rax", leftReg));
+		add(new imulNode(rightReg));
+		add(new moveNode(leftReg, "rax"));
+		add(new popNode("rax"));
+	}else
+	if (op == mod){
+		add(new pushNode("rax"));
+		add(new pushNode("rdx"));
+		add(new xorNode("rdx","rdx"));
+		add(new moveNode("rax", leftReg));
+		add(new idivNode(rightReg));
+		add(new moveNode(leftReg, "rdx"));
+		add(new popNode("rdx"));
+		add(new popNode("rax"));
+	}else
+	if (op == bitAnd){
+		add(new andNode(leftReg, rightReg));
+	}else
+	if (op == bitOr){
+		add(new orNode(leftReg,rightReg));
+	}else
+	if (op == xOr){
+		add(new xorNode(leftReg,rightReg));
+	}else if (op == lessThan){
+		add(new cmpNode(leftReg,rightReg));
+		add(new moveNode(leftReg, "0"));
+		add(new jgeNode(boolLabel));
+		add(new notNode(leftReg));
+		add(new labelNode(boolLabel));
+	}else if (op == greaterThan){
+		add(new cmpNode(leftReg,rightReg));
+		add(new moveNode(leftReg, "0"));
+		add(new jleNode(boolLabel));
+		add(new notNode(leftReg));
+		add(new labelNode(boolLabel));
+	}else if (op == equalTo) {
+		add(new cmpNode(leftReg,rightReg));
+		add(new moveNode(leftReg, "0"));
+		add(new jneNode(boolLabel));
+		add(new notNode(leftReg));
+		add(new labelNode(boolLabel));
+	}else if (op == notEqualTo) {
+		add(new cmpNode(leftReg,rightReg));
+		add(new moveNode(leftReg, "0"));
+		add(new jeNode(boolLabel));
+		add(new notNode(leftReg));
+		add(new labelNode(boolLabel));
+	}else if (op == lessEqu){
+		add(new cmpNode(leftReg,rightReg));
+		add(new moveNode(leftReg, "0"));
+		add(new jgNode(boolLabel));
+		add(new notNode(leftReg));
+		add(new labelNode(boolLabel));
+	}else if (op == greaterEqu){
+		add(new cmpNode(leftReg,rightReg));
+		add(new moveNode(leftReg, "0"));
+		add(new jlNode(boolLabel));
+		add(new notNode(leftReg));
+		add(new labelNode(boolLabel));
+	}else if (op == bAnd){
+		add(new andNode(leftReg,rightReg));
+	}else if (op == bOr) {
+		add(new orNode(leftReg,rightReg));
+	}
+
+	regAvail->push_front(rightReg);
+}
+
+void codeGenerator::check(unaryExpressionASTNode *n, SymbolTable *currentST){
+	ExpressionASTNode* exp = n->getExpr();
+	unaryOp op = n->getOp();
+	string regVal = regAvail->front();
+	exp->accept(this, currentST);
+	regAvail->pop_front();
+
+	variableASTNode* var = dynamic_cast<variableASTNode*>(exp);
+	if(var){	
+		add(new moveNode(regVal, "[" + regVal + "]"));
+	}
+
+	if (op == neg){
+		add(new negNode(regVal));
+	}
+	if ((op == bitNot) || (op == boolNOT)){
+		add(new notNode(regVal));
+	}
+
+}
+
+void codeGenerator::check(printNode *n, SymbolTable *currentST){
+
+	ExpressionASTNode* value = n->getVal();
+	
+	string regVal = regAvail->front(); //Get first available register
+	string type = getRealType(value,currentST);
+
+	//Save registers for use
+	add(new pushNode("rdi"));//Format
+	add(new pushNode("rsi"));//String to be printed
+	add(new pushNode("rax"));
+	
+	value->accept(this, currentST); //Generate code for value to be printed leave answer in first available register
+
+	variableASTNode* var = dynamic_cast<variableASTNode*>(value);
+	if(var != NULL){
+		add(new moveNode("rsi", "[" + regVal + "]"));
+	}else{
+		add(new moveNode("rsi",  regVal ));
+	}
+
+	if (type.compare("number") == 0){
+			add(new moveNode("rdi", "integer"));
+	}else if (type.compare("letter") == 0){
+			add(new moveNode("rdi", "char")); //Format for printing char
+    }else{
+        	add(new moveNode("rdi", "string"));
+	}
+
+	//USES THE RIGHT REGISTERS FOR NOW. MIGHT NEED SOME REGISTER MANAGEMENT
+	
+	add(new moveNode("rax", "0"));
+	add(new callerNode("printf"));//Linked with GCC to call printf
+	add(new popNode("rax"));
+	add(new popNode("rsi"));
+	add(new popNode("rdi"));
+}
+
+
+void combine(deque<IA32Nodes*>* newCode, deque<IA32Nodes*>* prevCode){
+	while(newCode->back() != newCode->front()){
+		prevCode->push_front(newCode->back());
+		newCode->pop_back();
+	}
+	prevCode->push_front(newCode->back());
+	newCode->pop_back();
+}
+
+void codeGenerator::check(procedureDeclNode *n, SymbolTable *currentST){
+
+	funcStack->push_front(instr); //stack has all code generated previously
+	instr = new deque<IA32Nodes*>();
+
+	int scopeLevel = currentScope->getScopeLevel();
+	//convert scope level into str
+	stringstream sss;
+	sss << scopeLevel;
+	
+	//add proc to current scope
+	currentScope->add(n->getName(), n->getName()+"_"+sss.str(),0);
+
+
+	//Set the scope label for proc
+	currentScope->setScopeLabel(n->getName());
+	decls->push_back(new resbNode(currentScope->getScopeLabel(),wordSize)); //Reserve space for another scope
+	//Need to try and make it print internal functions seperately
+	if(n->getName().compare("hatta") == 0 && scopeLevel == 0){
+		add(new labelNode(n->getName()+"_"+sss.str()));
+		
+		add(new pushNode("rbp"));
+		add(new moveNode("rbp","rsp"));
+		//create a new scope
+		add(new moveNode("[" + currentScope->getScopeLabel() + "]", "rbp")); //Save basepointer address to scope label
+		argBuffer = n->getArgs();
+		//Need to add my parameters to codeGenEnv next scope
+		
+		
+		n->getBody()->accept(this,currentST); //instr now has all the code generated by this
+		add(new moveNode("rsp","rbp"));
+		add(new popNode("rbp"));// restore stack pointers
+	}else{
+		add(new labelNode(n->getName()+"_"+sss.str())); //print label for proc(unique)
+		add(new pushNode("rbp"));
+		add(new moveNode("rbp","rsp"));
+		add(new moveNode("[" + currentScope->getScopeLabel() + "]", "rbp")); //Save basepointer address to scope label#
+		argBuffer = n->getArgs();
+		n->getBody()->accept(this,currentST); //generate code for body
+		add(new moveNode("rsp","rbp"));
+		add(new popNode("rbp"));// restore stack pointers	
+	}
+	add(new retNode());
+	deque<IA32Nodes*>* front = funcStack->front(); //front is all the code generated previously
+	funcStack->pop_front();
+	combine(instr,front); //puts all the new code(instr) on top of old code(front)
+	instr = front;
+	
+	 //change scope back to previous one
+}
+
+
+void codeGenerator::check(functionDeclNode *n, SymbolTable *currentST){	
+
+
+	funcStack->push_front(instr); //stack has all code generated previously
+	instr = new deque<IA32Nodes*>();
+
+	int scopeLevel = currentScope->getScopeLevel();
+	//convert scope level into str
+	stringstream sss;
+	sss << scopeLevel;
+	
+	//add proc to current scope
+	currentScope->add(n->getName(), n->getName()+"_"+sss.str(),0);
+
+
+	//Set the scope label for proc
+	currentScope->setScopeLabel(n->getName());
+	decls->push_back(new resbNode(currentScope->getScopeLabel(),wordSize)); //Reserve space for another scope
+	//Need to try and make it print internal functions seperately
+	
+	add(new labelNode(n->getName()+"_"+sss.str())); //print label for proc(unique)
+	add(new pushNode("rbp"));
+	add(new moveNode("rbp","rsp"));
+	add(new moveNode("[" + currentScope->getScopeLabel() + "]", "rbp")); //Save basepointer address to scope label#
+	argBuffer = n->getArgs();
+	n->getBody()->accept(this,currentST); //generate code for body
+
+	deque<IA32Nodes*>* front = funcStack->front(); //front is all the code generated previously
+	funcStack->pop_front();
+	combine(instr,front); //puts all the new code(instr) on top of old code(front)
+	instr = front;
+	 //change scope back to previous one
+
+}
+void codeGenerator::check(branchingNode *n, SymbolTable *currentST){
+	ExpressionASTNode* expr = n->getExpr();
+	statementListNode* b = n->getBody();
+
+	int thisElse = nextElseCount();
+	stringstream ss;
+	ss << thisElse;
+	string ifElseLabel = "else_" + ss.str();
+	if (expr){
+		/*binaryExpressionASTNode *e = dynamic_cast<binaryExpressionASTNode*> (expr);
+		unaryOp opU;
+		binaryOp opB;
+		if (e == NULL){
+			unaryExpressionASTNode *e = dynamic_cast<unaryExpressionASTNode*> (expr);
+			opU = e->getOp();
+		} else {
+			opB = e->getOp();
+		}*/
+		string boolReg = regAvail->front();
+		expr->accept(this, currentST);
+		regAvail->push_front(boolReg);
+		
+		//if (opB == lessThan){
+			add(new cmpNode(boolReg, "0"));
+			add(new jeNode(ifElseLabel));
+
+		/*}else if (opB == greaterThan){
+			add(new cmpNode(boolReg, "0"));
+			add(new jeNode(ifElseLabel));
+		}else if (opB == equalTo){
+			add(new cmpNode(boolReg, "0"));
+			add(new jeNode(ifElseLabel));
+		}else if (opB == notEqualTo){
+			add(new cmpNode(boolReg, "0"));
+			add(new jeNode(ifElseLabel));
+		}else if (opB == lessEqu){
+			add(new cmpNode(boolReg, "0"));
+			add(new jeNode(ifElseLabel));
+		}else if (opB == greaterEqu){
+			add(new cmpNode(boolReg, "0"));
+			add(new jeNode(ifElseLabel));
+		}else if (opB == bAnd){
+			add(new cmpNode(boolReg, "0"));
+			add(new jeNode(ifElseLabel));
+		}else if (opB == bOr){
+			add(new cmpNode(boolReg, "0"));
+			add(new jeNode(ifElseLabel));
+		}else if (opU == boolNOT){
+			add(new cmpNode(boolReg, "0"));
+			add(new jeNode(ifElseLabel));
+		}*/
+
+	}
+
+
+
+
+	b->accept(this, currentST);
+
+    add(new labelNode(ifElseLabel));
+
+
+}
+void codeGenerator::check(ifStatementNode *n, SymbolTable *currentST){
+	ExpressionASTNode *e = n->getExpr();
+	/*unaryOp opU;
+	binaryOp opB;
+	if (e == NULL){
+		unaryExpressionASTNode *e = dynamic_cast<unaryExpressionASTNode*> (n->getExpr());
+		opU = e->getOp();
+	} else {
+		opB = e->getOp();
+	}*/
+
+	statementListNode* b = n->getBody();
+
+	branchingNodes* o = n->getOthers();
+
+
+	int thisIf = nextIfCount();
+	int thisElse = nextElseCount();
+	stringstream ss;
+	ss << thisIf;
+	stringstream s2;
+	s2 << thisElse;
+	string ifLabel = "if_" + ss.str();
+	string ifElseLabel = "else_" + s2.str();	
+	string endIfLabel = "endIf_" + ss.str();
+
+    add(new labelNode(ifLabel));	
+
+
+	string boolReg = regAvail->front();
+	e->accept(this, currentST);
+	regAvail->push_front(boolReg);
+
+
+	//if (opB == lessThan){
+			add(new cmpNode(boolReg, "0"));
+			add(new jeNode(ifElseLabel));
+	/*}else if (opB == greaterThan){
+			add(new cmpNode(boolReg, "0"));
+			add(new jeNode(ifElseLabel));
+	}else if (opB == equalTo){
+			add(new cmpNode(boolReg, "0"));
+			add(new jeNode(ifElseLabel));
+	}else if (opB == notEqualTo){
+			add(new cmpNode(boolReg, "0"));
+			add(new jeNode(ifElseLabel));
+	}else if (opB == lessEqu){
+			add(new cmpNode(boolReg, "0"));
+			add(new jeNode(ifElseLabel));
+	}else if (opB == greaterEqu){
+			add(new cmpNode(boolReg, "0"));
+			add(new jeNode(ifElseLabel));
+	}else if (opB == bAnd){
+			add(new cmpNode(boolReg, "0"));
+			add(new jeNode(ifElseLabel));
+	}else if (opB == bOr){
+			add(new cmpNode(boolReg, "0"));
+			add(new jeNode(ifElseLabel));
+	}else if (opU == boolNOT){
+			add(new cmpNode(boolReg, "0"));
+			add(new jeNode(ifElseLabel));
+	}*/
+
+
+	b->accept(this, currentST);
+	add(new jmpNode(endIfLabel));
+
+    add(new labelNode(ifElseLabel));
+
+	o->accept(this, currentST);
+
+    add(new labelNode(endIfLabel));
+
+}
+void codeGenerator::check(whatWasNode *n, SymbolTable *currentST){
+	variableASTNode* var = n->getStore();
+	string varBase = currentScope->searchCurrentForBase(var->getName());
+	int offset = currentScope->searchCurrentForOffset(var->getName());
+	stringstream ss;
+	ss << offset;
+	
+	string type = getRealType(var, currentST);
+
+
+	add(new pushNode("rdi"));
+	add(new pushNode("rsi"));
+	add(new pushNode("rax"));
+
+	add(new moveNode("rax" , varBase));
+
+
+	if (type.compare("number") == 0){
+			add(new moveNode("rdi", "scaninteger"));
+			add(new leaNode("rsi", "[rax" + ss.str() + "]"));
+			
+	}else if (type.compare("letter") == 0){
+			add(new moveNode("rdi", "scanchar")); 
+			add(new leaNode("rsi", "[rax" + ss.str() + "]"));
+    }else{        	
+			add(new moveNode("rdi", "scanstring"));
+			add(new addNode("rax", ss.str()));
+			add(new moveNode("rsi" , "rax"));
+	}
+
+	
+	add(new moveNode("rax", "0"));
+	add(new callerNode("scanf"));
+
+	add(new popNode("rax"));
+	add(new popNode("rsi"));
+	add(new popNode("rdi"));
+
+}
+void codeGenerator::check(perhapsDeclAndBody *n, SymbolTable *currentST){
+		//I think this is what this one should do, but cannot test until decl nodes are done!
+	statementListNode* b = n->getBody();
+	typeDeclNode* decls = n->getDecls();
+
+	string decReg = regAvail->front();
+	decls->accept(this, currentST);
+	regAvail->push_front(decReg);
+	
+	b->accept(this, currentST);
+
+
+}
+void codeGenerator::check(loopNode *n, SymbolTable *currentST){
+	ExpressionASTNode *e = n->getExpr();
+	/*unaryOp opU;
+	binaryOp opB;
+	if (e == NULL){
+		unaryExpressionASTNode *e = dynamic_cast<unaryExpressionASTNode*> (n->getExpr());
+		opU = e->getOp();
+	} else {
+		opB = e->getOp();
+	}*/
+
+	compoundStatement* b = n->getBody();
+
+
+
+/*
+
+Also, in binary, need to ensure bAnd and bOr work with eflags values.
+
+*/
+
+	int thisLoop = nextLoopCount();
+	stringstream ss;
+	ss << thisLoop;
+	string loopLabel = "loop_" + ss.str();
+	string endLoopLabel = "endloop_" + ss.str();
+
+    add(new labelNode(loopLabel));
+	string boolReg = regAvail->front();
+	e->accept(this, currentST);
+	regAvail->push_front(boolReg);
+ 
+	//NOTE TO MARTIN: If you find that there's an instruction that you need but there isn't a node for it then feel free to make one.
+	//if (opB == lessThan){
+			add(new cmpNode(boolReg, "0"));
+			add(new jneNode(endLoopLabel));
+	/*}else if (opB == greaterThan){
+			add(new cmpNode(boolReg, "0"));
+			add(new jneNode(endLoopLabel));
+	}else if (opB == equalTo){
+			add(new cmpNode(boolReg, "0"));
+			add(new jneNode(endLoopLabel));
+	}else if (opB == notEqualTo){
+			add(new cmpNode(boolReg, "0"));
+			add(new jneNode(endLoopLabel));
+	}else if (opB == lessEqu){
+			add(new cmpNode(boolReg, "0"));
+			add(new jneNode(endLoopLabel));
+	}else if (opB == greaterEqu){
+			add(new cmpNode(boolReg, "0"));
+			add(new jneNode(endLoopLabel));
+	}else if (opB == bAnd){
+			add(new cmpNode(boolReg, "0"));
+			add(new jneNode(endLoopLabel));
+	}else if (opB == bOr){
+			add(new cmpNode(boolReg, "0"));
+			add(new jneNode(endLoopLabel));
+	}else if (opU == boolNOT){
+			add(new cmpNode(boolReg, "0"));
+			add(new jneNode(endLoopLabel));
+	}*/
+
+
+	b->accept(this, currentST);
+
+
+	add(new jmpNode(loopLabel));
+	add(new labelNode(endLoopLabel));
+} 
+
+void codeGenerator::check(sentenceASTNode *n, SymbolTable *currentST){
+    string regVal = regAvail->front();
+    string value = n->getValue();
+	int thisCounter = nextStringCount();
+	stringstream ss;
+	ss << thisCounter;
+	string label = "string" + ss.str();
+	instr->push_front(new stringNode(value,label)); //Needs to be put at top of file
+	add(new moveNode(regVal, label));
+
+}
+
+void codeGenerator::check(letterASTNode *n, SymbolTable *currentST){
+	string regVal = regAvail->front();
+	char val = n->getValue();
+
+    string value = string("'") + (val) + string("'");
+    add(new moveNode(regVal,value));
+    
+}
+void codeGenerator::check(numberASTNode *n, SymbolTable *currentST){
+	string regVal = regAvail->front(); //Gets the first available register
+	stringstream ss;//create a stringstream
+   	ss << n->getValue();//add number to the stream
+	add(new moveNode(regVal,ss.str()));
+}
+void codeGenerator::check(programNode *n, SymbolTable *currentST){
+	cout << "Starting code generation..." << endl;
+	currentScope->setScopeLabel("global");
+	decls->push_back(new resbNode(currentScope->getScopeLabel(),wordSize));
+	global->push_front(new labelNode("main"));
+	global->push_back(new pushNode("rbp"));
+	global->push_back(new moveNode("rbp","rsp"));
+	global->push_back(new moveNode("[" + currentScope->getScopeLabel() + "]", "rbp"));
+	n->getStart()->accept(this,currentST);
+	global->push_back(new callerNode("hatta_0"));
+	global->push_back(new moveNode("rsp","rbp"));
+	global->push_back(new popNode("rbp"));
+	global->push_back(new retNode());
+	printFile();
+	cout << "Finished code generation..." << endl;
+}
+
